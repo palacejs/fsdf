@@ -1,33 +1,40 @@
-const express = require('express');
-const fs = require('fs');
-const app = express();
-const PORT = process.env.PORT || 3000;
-const DB_FILE = './tokens.json';
+// Cloudflare KV Store bağlantısı
+const TOKENS = KV_NAMESPACE;  // Burada TOKENS'i Cloudflare'da KV Store olarak ayarlamalısınız
 
-app.use(express.json());
+// GET: /alltokens endpoint
+async function handleGetRequest(request) {
+  const tokens = await TOKENS.get('tokens', 'json');
+  return new Response(JSON.stringify(tokens || { count: 0, tokens: [] }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
 
-app.post('/savetoken', (req, res) => {
-    const { jwt } = req.body;
-    if (!jwt) return res.status(400).json({ error: 'JWT required' });
+// POST: /savetoken endpoint
+async function handlePostRequest(request) {
+  const { jwt } = await request.json();
+  if (!jwt) {
+    return new Response('JWT token is required', { status: 400 });
+  }
 
-    let data = { count: 0, tokens: [] };
-    if (fs.existsSync(DB_FILE)) {
-        data = JSON.parse(fs.readFileSync(DB_FILE));
-    }
+  const tokens = await TOKENS.get('tokens', 'json') || { count: 0, tokens: [] };
+  tokens.tokens.push({ jwt, created_at: new Date().toISOString() });
+  tokens.count = tokens.tokens.length;
 
-    data.tokens.push({ jwt, created_at: new Date().toISOString() });
-    data.count = data.tokens.length;
+  await TOKENS.put('tokens', JSON.stringify(tokens));
 
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-    res.json({ success: true });
-});
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
 
-app.get('/alltokens', (req, res) => {
-    if (!fs.existsSync(DB_FILE)) return res.json({ count: 0, tokens: [] });
-    const data = JSON.parse(fs.readFileSync(DB_FILE));
-    res.json(data);
-});
-
-app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+// Request handler
+addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  if (url.pathname === '/alltokens' && event.request.method === 'GET') {
+    event.respondWith(handleGetRequest(event.request));
+  } else if (url.pathname === '/savetoken' && event.request.method === 'POST') {
+    event.respondWith(handlePostRequest(event.request));
+  } else {
+    event.respondWith(new Response('Not Found', { status: 404 }));
+  }
 });
